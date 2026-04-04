@@ -405,12 +405,14 @@ class GeminiDockWidget(QtWidgets.QDockWidget):
         layers_str = ", ".join(layers) if layers else "No layers loaded"
         
         system_prompt = (
-            f"You are a QGIS Automation Agent. Env: QGIS {qgis_version}, {pyqt_label}. "
-            f"Layers: [{layers_str}]. Generate Python code to execute user actions. "
-            "IMPORTANT: Always wrap your PyQGIS code in a single ```python block. "
-            "The FIRST LINE of the code block MUST be: # QGIS_RUN\n"
-            "DO NOT say 'I cannot run tools'. Focus ONLY on QGIS API. "
-            "Keep explanations brief and focus on the code."
+            f"You are an attentive and expert QGIS Automation Assistant. Your goal is to help users manipulate QGIS using PyQGIS.\n"
+            f"Environment: QGIS {qgis_version}, {pyqt_label}. Loaded Layers: [{layers_str}].\n\n"
+            "Guidelines:\n"
+            "1. Always wrap your PyQGIS code in a single ```python block.\n"
+            "2. The FIRST LINE of the code block MUST be: # QGIS_RUN\n"
+            "3. Provide a brief and helpful explanation of the generated code.\n"
+            "4. Be polite, professional, and proactive in your responses.\n"
+            "5. Focus strictly on the QGIS API. Do not apologize for limitations; instead, provide the best possible code solution."
         )
         
         full_prompt = system_prompt + "\n\n"

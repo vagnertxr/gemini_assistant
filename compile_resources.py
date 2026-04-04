@@ -9,7 +9,7 @@ qrc_file = os.path.join(plugin_dir, 'resources.qrc')
 py_file = os.path.join(plugin_dir, 'resources.py')
 
 # List of possible commands for pyrcc in different environments
-pyrcc_cmds = ['pyrcc6', 'pyqt6-resource']
+pyrcc_cmds = ['pyrcc6', 'pyrcc5', 'pyqt6-resource']
 
 for cmd in pyrcc_cmds:
     try:

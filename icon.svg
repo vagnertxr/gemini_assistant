@@ -1,15 +1,17 @@
 <svg width="256" height="256" viewBox="0 0 256 256" fill="none" xmlns="http://www.w3.org/2000/svg">
 <defs>
-<linearGradient id="grad1" x1="0%" y1="0%" x2="100%" y2="100%">
-  <stop offset="0%" style="stop-color:#89b4fa;stop-opacity:1" />
-  <stop offset="100%" style="stop-color:#b4befe;stop-opacity:1" />
-</linearGradient>
-<linearGradient id="grad2" x1="0%" y1="0%" x2="100%" y2="100%">
-  <stop offset="0%" style="stop-color:#74c7ec;stop-opacity:1" />
-  <stop offset="100%" style="stop-color:#89b4fa;stop-opacity:1" />
+<linearGradient id="google-colors-hard" x1="0%" y1="0%" x2="100%" y2="100%">
+  <stop offset="0%" stop-color="#4285F4" />
+  <stop offset="25%" stop-color="#4285F4" />
+  <stop offset="25%" stop-color="#EA4335" />
+  <stop offset="50%" stop-color="#EA4335" />
+  <stop offset="50%" stop-color="#FBBC05" />
+  <stop offset="75%" stop-color="#FBBC05" />
+  <stop offset="75%" stop-color="#34A853" />
+  <stop offset="100%" stop-color="#34A853" />
 </linearGradient>
 </defs>
-<path d="M128 24C65.78 24 16 73.78 16 136C16 171.21 34.63 202.34 64 220.5V192C47.47 177.6 38 157.97 38 136C38 84.78 78.78 44 128 44C177.22 44 218 84.78 218 136C218 157.97 208.53 177.6 192 192V220.5C221.37 202.34 240 171.21 240 136C240 73.78 190.22 24 128 24Z" fill="url(#grad1)"/>
-<path d="M128 158C114.75 158 104 168.75 104 182C104 195.25 114.75 206 128 206C141.25 206 152 195.25 152 182C152 168.75 141.25 158 128 158Z" fill="#b4befe"/>
-<path d="M64 192C64 158.52 82.52 130 112 130H128V88H112C63.2 88 24 127.2 24 176C24 200.28 35.82 222.46 54 235.83L64 228V192Z" fill="url(#grad2)"/>
+<path d="M128 24C65.78 24 16 73.78 16 136C16 171.21 34.63 202.34 64 220.5V192C47.47 177.6 38 157.97 38 136C38 84.78 78.78 44 128 44C177.22 44 218 84.78 218 136C218 157.97 208.53 177.6 192 192V220.5C221.37 202.34 240 171.21 240 136C240 73.78 190.22 24 128 24Z" fill="url(#google-colors-hard)"/>
+<path d="M128 158C114.75 158 104 168.75 104 182C104 195.25 114.75 206 128 206C141.25 206 152 195.25 152 182C152 168.75 141.25 158 128 158Z" fill="#4285F4"/>
+<path d="M64 192C64 158.52 82.52 130 112 130H128V88H112C63.2 88 24 127.2 24 176C24 200.28 35.82 222.46 54 235.83L64 228V192Z" fill="#34A853"/>
 </svg>
