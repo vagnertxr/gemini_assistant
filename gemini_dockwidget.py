@@ -3,6 +3,12 @@ from qgis.PyQt import QtWidgets, QtCore, QtGui
 from qgis.core import QgsMessageLog, Qgis, QgsProject, QgsSettings
 import os
 import subprocess
+import html
+import re
+import tempfile
+
+# Import variable for PyQt version detection
+from qgis.PyQt.QtCore import PYQT_VERSION_STR
 
 class SettingsDialog(QtWidgets.QDialog):
     def __init__(self, parent=None):
@@ -16,7 +22,12 @@ class SettingsDialog(QtWidgets.QDialog):
         # API Key
         layout.addWidget(QtWidgets.QLabel("<b>Google API Key:</b> (Optional if using OAuth)"))
         self.api_key_input = QtWidgets.QLineEdit()
-        self.api_key_input.setEchoMode(QtWidgets.QLineEdit.EchoMode.Password)
+        
+        if hasattr(QtWidgets.QLineEdit, 'EchoMode') and hasattr(QtWidgets.QLineEdit.EchoMode, 'Password'):
+            self.api_key_input.setEchoMode(QtWidgets.QLineEdit.EchoMode.Password)
+        elif hasattr(QtWidgets.QLineEdit, 'Password'):
+            self.api_key_input.setEchoMode(QtWidgets.QLineEdit.Password)
+            
         self.api_key_input.setText(self.settings.value("gemini_assistant/api_key", ""))
         layout.addWidget(self.api_key_input)
         
@@ -83,7 +94,6 @@ class SettingsDialog(QtWidgets.QDialog):
                         break
                 
                 if not success:
-                    # Fallback: try to run directly, might work if it just opens a browser
                     subprocess.Popen([cli, 'login'])
             
             QtWidgets.QMessageBox.information(self, "OAuth", "Login process started. Follow the instructions in your browser or terminal.")
@@ -102,22 +112,52 @@ class GeminiDockWidget(QtWidgets.QDockWidget):
         self.setObjectName("GeminiAssistantDockWidget")
         self.settings = QgsSettings()
         
+        # Create a safe temp directory for the agent to work in
+        self.safe_dir = tempfile.mkdtemp(prefix="qgis_gemini_")
+        
         # --- UI Setup ---
         self.widget = QtWidgets.QWidget()
         self.layout = QtWidgets.QVBoxLayout(self.widget)
         
-        self.tabs = QtWidgets.QTabWidget()
+        if hasattr(QtCore.Qt, 'Orientation') and hasattr(QtCore.Qt.Orientation, 'Vertical'):
+            orientation = QtCore.Qt.Orientation.Vertical
+        else:
+            orientation = QtCore.Qt.Vertical
+            
+        self.splitter = QtWidgets.QSplitter(orientation)
+        self.splitter.setStyleSheet("QSplitter::handle { background-color: #313244; height: 1px; }")
+        
+        # Chat History
         self.chat_history = QtWidgets.QTextEdit()
         self.chat_history.setReadOnly(True)
-        self.chat_history.setStyleSheet("background-color: #1e1e2e; color: #cdd6f4; font-family: monospace; font-size: 10pt;")
-        self.tabs.addTab(self.chat_history, "💬 Chat")
+        self.chat_history.setStyleSheet("""
+            QTextEdit {
+                background-color: #1e1e2e;
+                color: #cdd6f4;
+                font-family: sans-serif;
+                font-size: 10pt;
+                border: none;
+            }
+        """)
+        self.splitter.addWidget(self.chat_history)
         
+        # Log View
         self.log_view = QtWidgets.QTextEdit()
         self.log_view.setReadOnly(True)
-        self.log_view.setStyleSheet("background-color: #11111b; color: #a6e3a1; font-family: monospace; font-size: 9pt;")
-        self.tabs.addTab(self.log_view, "📜 Log")
+        self.log_view.setStyleSheet("""
+            QTextEdit {
+                background-color: #11111b; 
+                color: #a6e3a1; 
+                font-family: monospace; 
+                font-size: 9pt; 
+                border: none;
+            }
+        """)
+        self.splitter.addWidget(self.log_view)
         
-        self.layout.addWidget(self.tabs)
+        self.splitter.setStretchFactor(0, 7)
+        self.splitter.setStretchFactor(1, 3)
+        self.layout.addWidget(self.splitter)
         
         self.input_field = QtWidgets.QLineEdit()
         self.input_field.setPlaceholderText("Ask Gemini to do something in QGIS...")
@@ -150,48 +190,94 @@ class GeminiDockWidget(QtWidgets.QDockWidget):
         
         self.setWidget(self.widget)
         
-        # --- QProcess Setup ---
+        # --- QProcess & Context ---
         self.process = QtCore.QProcess(self)
-        # Separate channels to filter system logs from chat
         self.process.setProcessChannelMode(QtCore.QProcess.ProcessChannelMode.SeparateChannels if hasattr(QtCore.QProcess, 'ProcessChannelMode') else 0)
-        
         self.process.readyReadStandardOutput.connect(self.on_stdout_ready)
         self.process.readyReadStandardError.connect(self.on_stderr_ready)
         self.process.finished.connect(self.on_process_finished)
 
         self.full_response = ""
-        self.append_chat("Gemini Assistant initialized. How can I help you map today?", is_system=True)
+        self.last_response_pos = 0
+        self.chat_context = []
+        
+        self.append_chat("Gemini Assistant initialized. Privacy and QGIS 4 support enabled. How can I help?", is_system=True)
 
-    def append_chat(self, text, is_user=False, is_system=False, stream=False):
+    def get_end_cursor(self):
         cursor = self.chat_history.textCursor()
-        cursor.movePosition(QtGui.QTextCursor.MoveOperation.End if hasattr(QtGui.QTextCursor, 'MoveOperation') else 11)
+        if hasattr(QtGui.QTextCursor, 'MoveOperation') and hasattr(QtGui.QTextCursor.MoveOperation, 'End'):
+            op = QtGui.QTextCursor.MoveOperation.End
+        elif hasattr(QtGui.QTextCursor, 'End'):
+            op = QtGui.QTextCursor.End
+        else:
+            op = 11
+        cursor.movePosition(op)
+        return cursor
+
+    def append_chat(self, text, is_user=False, is_system=False):
+        cursor = self.get_end_cursor()
         self.chat_history.setTextCursor(cursor)
 
-        if stream:
-            # Filter out common CLI noise that might still leak into stdout
-            noise = ["YOLO mode", "Loaded cached", "API_KEY are set", "Using GOOGLE_API_KEY"]
-            clean_text = text
-            for n in noise:
-                if n in clean_text:
-                    # Redirect noise to log instead of chat
-                    self.append_log(clean_text.strip())
-                    return
+        if is_user:
+            html_text = f"<p style='margin-bottom: 8px;'><b style='color: #a6e3a1;'>You:</b><br><span style='color: #cdd6f4;'>{html.escape(text)}</span></p>"
+            self.chat_history.append(html_text)
+        elif is_system:
+            html_text = f"<p style='margin-bottom: 8px;'><i style='color: #f9e2af;'>{text}</i></p>"
+            self.chat_history.append(html_text)
+        else: # Gemini header
+            html_header = f"<p style='margin-bottom: 4px;'><b style='color: #89b4fa;'>Gemini:</b></p>"
+            self.chat_history.append(html_header)
+            
+            cursor = self.get_end_cursor()
+            cursor.insertHtml("<span></span>")
+            self.last_response_pos = cursor.position()
+            cursor.insertHtml("<i id='thinking' style='color: #f9e2af;'>Thinking...</i>")
+            
+        self.chat_history.ensureCursorVisible()
 
-            self.chat_history.insertHtml(clean_text.replace(chr(10), '<br>'))
+    def format_markdown(self, text):
+        parts = text.split("```")
+        html_out = ""
+        for i, part in enumerate(parts):
+            if i % 2 == 1: # Code block
+                lines = part.split("\n", 1)
+                code = lines[1] if len(lines) > 1 else ""
+                code_esc = html.escape(code).replace("\n", "<br>").replace(" ", "&nbsp;")
+                html_out += f'<div style="background-color: #24273a; font-family: monospace; border: 1px solid #494d64; padding: 10px; margin: 8px 0; color: #a6e3a1; border-radius: 4px;">{code_esc}</div>'
+            else:
+                text_esc = html.escape(part).replace("\n", "<br>")
+                html_out += f'<span style="color: #cdd6f4; font-family: sans-serif;">{text_esc}</span>'
+        return html_out
+
+    def render_gemini_response(self, text):
+        cursor = self.chat_history.textCursor()
+        cursor.setPosition(self.last_response_pos)
+        
+        if hasattr(QtGui.QTextCursor, 'MoveOperation') and hasattr(QtGui.QTextCursor.MoveOperation, 'End'):
+            op_end = QtGui.QTextCursor.MoveOperation.End
         else:
-            if is_user:
-                html = f"<p style='margin-bottom: 8px;'><b style='color: #a6e3a1;'>You:</b><br>{text}</p>"
-            elif is_system:
-                html = f"<p style='margin-bottom: 8px;'><i style='color: #f9e2af;'>{text}</i></p>"
-            else: # Gemini header
-                html = f"<p style='margin-bottom: 8px;'><b style='color: #89b4fa;'>Gemini:</b><br>"
-            self.chat_history.append(html)
+            op_end = 11
+            
+        if hasattr(QtGui.QTextCursor, 'MoveMode') and hasattr(QtGui.QTextCursor.MoveMode, 'KeepAnchor'):
+            mode = QtGui.QTextCursor.MoveMode.KeepAnchor
+        else:
+            mode = 1
+            
+        cursor.movePosition(op_end, mode)
+        cursor.removeSelectedText()
+        
+        noise_patterns = [r"YOLO mode", r"Loaded cached", r"API_KEY are set", r"Using GOOGLE_API_KEY"]
+        lines = text.splitlines()
+        clean_lines = [l for l in lines if not any(re.search(p, l) for p in noise_patterns)]
+        clean_text = "\n".join(clean_lines)
+        
+        formatted_html = self.format_markdown(clean_text)
+        cursor.insertHtml(formatted_html)
         self.chat_history.ensureCursorVisible()
 
     def append_log(self, text, is_error=False):
         if not text.strip(): return
         color = "#f38ba8" if is_error else "#cba6f7"
-        # Clean terminal escape codes if any
         clean_text = text.replace("[33m", "").replace("[39m", "").replace("[0m", "")
         self.log_view.append(f"<span style='color: {color};'>[{QtCore.QDateTime.currentDateTime().toString('hh:mm:ss')}]</span> {clean_text}")
         self.log_view.ensureCursorVisible()
@@ -199,6 +285,25 @@ class GeminiDockWidget(QtWidgets.QDockWidget):
     def show_settings(self):
         dlg = SettingsDialog(self)
         dlg.exec()
+
+    def get_execution_context(self):
+        """Builds a robust execution context by mirroring qgis.core and qgis.gui."""
+        import qgis.core
+        import qgis.gui
+        
+        context = {}
+        
+        # Populate context from core and gui automatically
+        for module in [qgis.core, qgis.gui]:
+            for name in dir(module):
+                if not name.startswith('_'):
+                    context[name] = getattr(module, name)
+            
+        # Add key convenience objects
+        context['iface'] = self.iface
+        context['QgsProject'] = qgis.core.QgsProject.instance()
+            
+        return context
 
     def send_command(self):
         cli_path = self.settings.value("gemini_assistant/cli_path", "gemini")
@@ -210,17 +315,32 @@ class GeminiDockWidget(QtWidgets.QDockWidget):
         self.append_chat(cmd, is_user=True)
         self.input_field.clear()
         self.set_running_state(True)
-        self.tabs.setCurrentIndex(0)
         
         self.append_chat("") 
         self.full_response = ""
 
+        qgis_version = Qgis.QGIS_VERSION.split('-')[0]
+        pyqt_major = PYQT_VERSION_STR.split('.')[0]
+        pyqt_label = f"PyQt{pyqt_major}"
+        
+        layers = [l.name() for l in QgsProject.instance().mapLayers().values()]
+        layers_str = ", ".join(layers) if layers else "No layers loaded"
+        
         system_prompt = (
-            "You are an expert QGIS assistant. If asked to perform an action, provide python code "
-            "wrapped in ```python blocks with # QGIS_RUN as the first line. The `iface` and `QgsProject` "
-            "objects are available. Output only the explanation and the code block."
+            f"You are a QGIS Automation Agent. Env: QGIS {qgis_version}, {pyqt_label}. "
+            f"Layers: [{layers_str}]. Generate Python code to execute user actions. "
+            "You MUST wrap code in ```python blocks with # QGIS_RUN as the first line. "
+            "DO NOT say 'I cannot run tools'. PRIVACY: Focus ONLY on QGIS API. "
+            "DO NOT research local files. TEXT: Plain text only, no markdown formatting."
         )
-        full_prompt = system_prompt + chr(10) + chr(10) + "User request: " + cmd
+        
+        full_prompt = system_prompt + "\n\n"
+        for msg in self.chat_context[-10:]:
+            role = "USER" if msg["role"] == "user" else "ASSISTANT"
+            full_prompt += f"{role}: {msg['content']}\n"
+        full_prompt += f"USER: {cmd}"
+        
+        self.chat_context.append({"role": "user", "content": cmd})
         
         env = QtCore.QProcessEnvironment.systemEnvironment()
         env.insert("PAGER", "cat")
@@ -229,12 +349,17 @@ class GeminiDockWidget(QtWidgets.QDockWidget):
             env.insert("GEMINI_API_KEY", api_key)
         
         self.process.setProcessEnvironment(env)
+        self.process.setWorkingDirectory(self.safe_dir)
         self.process.start(cli_path, ['-p', full_prompt, '--yolo'])
 
     def on_stdout_ready(self):
-        data = self.process.readAllStandardOutput().data().decode()
-        self.full_response += data
-        self.append_chat(data, stream=True)
+        try:
+            data = self.process.readAllStandardOutput().data().decode('utf-8', errors='ignore')
+            self.full_response += data
+            if self.full_response.strip():
+                self.render_gemini_response(self.full_response)
+        except Exception as e:
+            self.append_log(f"Stdout error: {str(e)}")
 
     def on_stderr_ready(self):
         data = self.process.readAllStandardError().data().decode()
@@ -242,6 +367,10 @@ class GeminiDockWidget(QtWidgets.QDockWidget):
 
     def on_process_finished(self):
         self.set_running_state(False)
+        if not self.full_response.strip():
+            self.render_gemini_response("(No response or error)")
+        else:
+            self.chat_context.append({"role": "assistant", "content": self.full_response})
         self.check_for_execution(self.full_response)
 
     def cancel_command(self):
@@ -252,6 +381,7 @@ class GeminiDockWidget(QtWidgets.QDockWidget):
     def clear_all(self):
         self.chat_history.clear()
         self.log_view.clear()
+        self.chat_context = []
         self.append_chat("History cleared.", is_system=True)
 
     def set_running_state(self, running):
@@ -264,17 +394,31 @@ class GeminiDockWidget(QtWidgets.QDockWidget):
     def check_for_execution(self, response):
         if "```python" in response and "# QGIS_RUN" in response:
             try:
-                code = response.split("# QGIS_RUN")[1].split("```")[0].strip()
-                self.append_log("Executing generated script...")
-                self.tabs.setCurrentIndex(1)
+                code_blocks = re.findall(r"```python\n(.*?)\n```", response, re.DOTALL | re.IGNORECASE)
+                code = ""
+                for b in code_blocks:
+                    if "# QGIS_RUN" in b:
+                        code = b.strip()
+                        break
                 
-                local_vars = {'iface': self.iface, 'QgsProject': QgsProject.instance(), 'Qgis': Qgis}
-                exec("from qgis.core import *; from qgis.gui import *", globals(), local_vars)
-                exec(code, globals(), local_vars)
+                if not code and "# QGIS_RUN" in response:
+                    code = response.split("# QGIS_RUN")[1].split("```")[0].strip()
+                    code = "# QGIS_RUN\n" + code
+
+                if not code: return
+
+                self.append_log("Executing generated script...")
+                context = self.get_execution_context()
+                exec(code, context)
                 self.append_log("Execution successful.")
             except Exception as e:
                 self.append_log(f"Execution error: {str(e)}", is_error=True)
 
     def closeEvent(self, event):
         self.cancel_command()
+        try:
+            import shutil
+            shutil.rmtree(self.safe_dir)
+        except:
+            pass
         super().closeEvent(event)
