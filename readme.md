@@ -1,6 +1,6 @@
 
 
-# <img src="https://raw.githubusercontent.com/vagnertxr/gemini_assistant/35a8ecc31e9a699ea3eed56b6ae7a4a8747f90ef/icon.svg" width="40" height="40"> Gemini QGIS Assistant
+# <img src="https://raw.githubusercontent.com/vagnertxr/gemini_assistant/3da79abd533baf3e4bed243cce5fe01555df30d3/icon.svg" width="40" height="40"> Gemini QGIS Assistant
 
 The Gemini QGIS Assistant is a specialized plugin for QGIS designed to integrate the Gemini CLI directly into the geographic information system environment. It enables users to utilize large language models for spatial analysis automation, layer management, and project-wide geoprocessing tasks using natural language inputs.
 
