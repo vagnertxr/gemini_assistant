@@ -6,6 +6,8 @@ import subprocess
 import html
 import re
 import tempfile
+import json
+import webbrowser
 
 # Import variable for PyQt version detection
 from qgis.PyQt.QtCore import PYQT_VERSION_STR
@@ -14,31 +16,42 @@ class SettingsDialog(QtWidgets.QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Gemini Assistant Settings")
-        self.resize(400, 250)
+        self.resize(450, 300)
         self.settings = QgsSettings()
         
         layout = QtWidgets.QVBoxLayout(self)
         
-        # API Key
-        layout.addWidget(QtWidgets.QLabel("<b>Google API Key:</b> (Optional if using OAuth)"))
-        self.api_key_input = QtWidgets.QLineEdit()
+        # API Key Section
+        api_group = QtWidgets.QGroupBox("Direct API Settings (Recommended)")
+        api_layout = QtWidgets.QVBoxLayout(api_group)
         
+        api_layout.addWidget(QtWidgets.QLabel("<b>Google API Key:</b>"))
+        self.api_key_input = QtWidgets.QLineEdit()
         if hasattr(QtWidgets.QLineEdit, 'EchoMode') and hasattr(QtWidgets.QLineEdit.EchoMode, 'Password'):
             self.api_key_input.setEchoMode(QtWidgets.QLineEdit.EchoMode.Password)
         elif hasattr(QtWidgets.QLineEdit, 'Password'):
             self.api_key_input.setEchoMode(QtWidgets.QLineEdit.Password)
-            
         self.api_key_input.setText(self.settings.value("gemini_assistant/api_key", ""))
-        layout.addWidget(self.api_key_input)
+        api_layout.addWidget(self.api_key_input)
         
+        test_layout = QtWidgets.QHBoxLayout()
         link_lbl = QtWidgets.QLabel("<a href='https://aistudio.google.com/app/apikey'>Get API Key from Google AI Studio</a>")
         link_lbl.setOpenExternalLinks(True)
-        layout.addWidget(link_lbl)
+        test_layout.addWidget(link_lbl)
         
-        layout.addSpacing(10)
+        self.test_btn = QtWidgets.QPushButton("Test Key")
+        self.test_btn.setFixedWidth(100)
+        self.test_btn.clicked.connect(self.test_api_key)
+        test_layout.addWidget(self.test_btn)
+        api_layout.addLayout(test_layout)
         
-        # Gemini CLI Path
-        layout.addWidget(QtWidgets.QLabel("<b>Gemini CLI Path:</b>"))
+        layout.addWidget(api_group)
+        
+        # CLI Section
+        cli_group = QtWidgets.QGroupBox("Gemini CLI Settings (Optional fallback)")
+        cli_layout = QtWidgets.QVBoxLayout(cli_group)
+        
+        cli_layout.addWidget(QtWidgets.QLabel("<b>Gemini CLI Path:</b>"))
         path_layout = QtWidgets.QHBoxLayout()
         self.path_input = QtWidgets.QLineEdit()
         default_path = "/usr/bin/gemini" if os.name != 'nt' else "gemini.exe"
@@ -49,15 +62,14 @@ class SettingsDialog(QtWidgets.QDialog):
         self.browse_btn.setFixedWidth(30)
         self.browse_btn.clicked.connect(self.browse_cli)
         path_layout.addWidget(self.browse_btn)
-        layout.addLayout(path_layout)
+        cli_layout.addLayout(path_layout)
         
-        layout.addSpacing(10)
-        
-        # OAuth Button
-        self.oauth_btn = QtWidgets.QPushButton("🔑 Login via Google OAuth (Browser)")
+        # OAuth Button (only if CLI is used)
+        self.oauth_btn = QtWidgets.QPushButton("🔑 Login via Gemini CLI (Requires CLI installed)")
         self.oauth_btn.clicked.connect(self.run_oauth)
-        layout.addWidget(self.oauth_btn)
+        cli_layout.addWidget(self.oauth_btn)
         
+        layout.addWidget(cli_group)
         layout.addStretch()
         
         # Bottom Buttons
@@ -69,6 +81,28 @@ class SettingsDialog(QtWidgets.QDialog):
         btns.rejected.connect(self.reject)
         layout.addWidget(btns)
 
+    def test_api_key(self):
+        key = self.api_key_input.text().strip()
+        if not key:
+            QtWidgets.QMessageBox.warning(self, "Test", "Please enter an API Key first.")
+            return
+            
+        try:
+            import requests
+            # Use v1beta gemini-flash-latest
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key={key}"
+            data = {"contents": [{"parts": [{"text": "Hello"}]}]}
+            res = requests.post(url, json=data, timeout=15)
+            if res.status_code == 200:
+                QtWidgets.QMessageBox.information(self, "Test Successful", "Connection successful! Gemini is ready.")
+            elif res.status_code == 503:
+                QtWidgets.QMessageBox.warning(self, "Warning", "Service Busy (503). Your key is valid, but Google's server is busy. Try again later.")
+            else:
+                error_msg = f"Status {res.status_code}: {res.text}"
+                QtWidgets.QMessageBox.critical(self, "Test Failed", f"Could not connect:\n{error_msg}")
+        except Exception as e:
+            QtWidgets.QMessageBox.critical(self, "Error", f"Connection error: {str(e)}")
+
     def browse_cli(self):
         filename, _ = QtWidgets.QFileDialog.getOpenFileName(self, "Select Gemini CLI executable", "", "Executable (*.exe);;All files (*)")
         if filename:
@@ -76,15 +110,22 @@ class SettingsDialog(QtWidgets.QDialog):
 
     def run_oauth(self):
         cli = self.path_input.text()
+        if not cli or not os.path.exists(cli):
+            # Try to find it in PATH
+            import shutil
+            if not shutil.which(cli):
+                QtWidgets.QMessageBox.warning(self, "Error", "Gemini CLI not found. Please provide a valid path or use an API Key above.")
+                return
+
         try:
             if os.name == 'nt':
-                subprocess.Popen(['cmd', '/c', 'start', 'cmd', '/k', f'"{cli}" login'], shell=True)
+                # Use 'start' with cmd /c to let Windows handle it properly
+                subprocess.Popen(['cmd', '/c', 'start', cli, 'login'], shell=True)
             else:
                 # Try common Linux terminal emulators
                 terminals = ['konsole', 'gnome-terminal', 'xfce4-terminal', 'lxterminal', 'xterm']
                 success = False
                 for term in terminals:
-                    # Check if terminal exists
                     if subprocess.run(['which', term], capture_output=True).returncode == 0:
                         if term == 'gnome-terminal':
                             subprocess.Popen([term, '--', cli, 'login'])
@@ -96,7 +137,7 @@ class SettingsDialog(QtWidgets.QDialog):
                 if not success:
                     subprocess.Popen([cli, 'login'])
             
-            QtWidgets.QMessageBox.information(self, "OAuth", "Login process started. Follow the instructions in your browser or terminal.")
+            QtWidgets.QMessageBox.information(self, "OAuth", "Login process started in a separate window. Follow the instructions.")
         except Exception as e:
             QtWidgets.QMessageBox.critical(self, "Error", f"Could not launch login: {str(e)}")
 
@@ -104,6 +145,42 @@ class SettingsDialog(QtWidgets.QDialog):
         self.settings.setValue("gemini_assistant/api_key", self.api_key_input.text())
         self.settings.setValue("gemini_assistant/cli_path", self.path_input.text())
         self.accept()
+
+class GeminiWorker(QtCore.QThread):
+    finished = QtCore.pyqtSignal(str, str) # response, error
+
+    def __init__(self, api_key, prompt):
+        super().__init__()
+        self.api_key = api_key
+        self.prompt = prompt
+
+    def run(self):
+        try:
+            import requests
+            # Usando v1beta e gemini-flash-latest para maior compatibilidade
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key={self.api_key}"
+            headers = {'Content-Type': 'application/json'}
+            data = {
+                "contents": [{"parts": [{"text": self.prompt}]}]
+            }
+            response = requests.post(url, headers=headers, json=data, timeout=30)
+            
+            if response.status_code == 503:
+                self.finished.emit("", "O serviço do Gemini está instável no momento (Erro 503). Tente novamente em alguns segundos.")
+                return
+                
+            response.raise_for_status()
+            res_json = response.json()
+            
+            if 'candidates' in res_json and len(res_json['candidates']) > 0:
+                text = res_json['candidates'][0]['content']['parts'][0]['text']
+                self.finished.emit(text, "")
+            else:
+                self.finished.emit("", f"Error: No candidates in response. {json.dumps(res_json)}")
+        except ImportError:
+            self.finished.emit("", "The 'requests' library is not available in your Python environment. Please install it or use the Gemini CLI fallback.")
+        except Exception as e:
+            self.finished.emit("", str(e))
 
 class GeminiDockWidget(QtWidgets.QDockWidget):
     def __init__(self, iface, parent=None):
@@ -200,8 +277,9 @@ class GeminiDockWidget(QtWidgets.QDockWidget):
         self.full_response = ""
         self.last_response_pos = 0
         self.chat_context = []
+        self.worker = None # For direct API calls
         
-        self.append_chat("Gemini Assistant initialized. Privacy and QGIS 4 support enabled. How can I help?", is_system=True)
+        self.append_chat("Gemini Assistant initialized. Direct API and QGIS 4 support enabled. How can I help?", is_system=True)
 
     def get_end_cursor(self):
         cursor = self.chat_history.textCursor()
@@ -329,9 +407,10 @@ class GeminiDockWidget(QtWidgets.QDockWidget):
         system_prompt = (
             f"You are a QGIS Automation Agent. Env: QGIS {qgis_version}, {pyqt_label}. "
             f"Layers: [{layers_str}]. Generate Python code to execute user actions. "
-            "You MUST wrap code in ```python blocks with # QGIS_RUN as the first line. "
-            "DO NOT say 'I cannot run tools'. PRIVACY: Focus ONLY on QGIS API. "
-            "DO NOT research local files. TEXT: Plain text only, no markdown formatting."
+            "IMPORTANT: Always wrap your PyQGIS code in a single ```python block. "
+            "The FIRST LINE of the code block MUST be: # QGIS_RUN\n"
+            "DO NOT say 'I cannot run tools'. Focus ONLY on QGIS API. "
+            "Keep explanations brief and focus on the code."
         )
         
         full_prompt = system_prompt + "\n\n"
@@ -342,15 +421,33 @@ class GeminiDockWidget(QtWidgets.QDockWidget):
         
         self.chat_context.append({"role": "user", "content": cmd})
         
-        env = QtCore.QProcessEnvironment.systemEnvironment()
-        env.insert("PAGER", "cat")
+        # Use direct API if key is present
         if api_key:
-            env.insert("GOOGLE_API_KEY", api_key)
-            env.insert("GEMINI_API_KEY", api_key)
-        
-        self.process.setProcessEnvironment(env)
-        self.process.setWorkingDirectory(self.safe_dir)
-        self.process.start(cli_path, ['-p', full_prompt, '--yolo'])
+            self.worker = GeminiWorker(api_key, full_prompt)
+            self.worker.finished.connect(self.on_worker_finished)
+            self.worker.start()
+        else:
+            # Fallback to CLI
+            env = QtCore.QProcessEnvironment.systemEnvironment()
+            env.insert("PAGER", "cat")
+            if api_key:
+                env.insert("GOOGLE_API_KEY", api_key)
+                env.insert("GEMINI_API_KEY", api_key)
+            
+            self.process.setProcessEnvironment(env)
+            self.process.setWorkingDirectory(self.safe_dir)
+            self.process.start(cli_path, ['-p', full_prompt, '--yolo'])
+
+    def on_worker_finished(self, response, error):
+        self.set_running_state(False)
+        if error:
+            self.append_log(f"API Error: {error}", is_error=True)
+            self.render_gemini_response(f"Sorry, an error occurred: {error}")
+        else:
+            self.full_response = response
+            self.render_gemini_response(response)
+            self.chat_context.append({"role": "assistant", "content": response})
+            self.check_for_execution(response)
 
     def on_stdout_ready(self):
         try:
@@ -374,6 +471,12 @@ class GeminiDockWidget(QtWidgets.QDockWidget):
         self.check_for_execution(self.full_response)
 
     def cancel_command(self):
+        if self.worker and self.worker.isRunning():
+            self.worker.terminate()
+            self.worker.wait()
+            self.append_chat("API call cancelled.", is_system=True)
+            self.set_running_state(False)
+            
         if self.process.state() != 0:
             self.process.kill()
             self.append_chat("Cancelled.", is_system=True)
