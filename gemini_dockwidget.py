@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 from qgis.PyQt import QtWidgets, QtCore, QtGui
-from qgis.core import QgsMessageLog, Qgis, QgsProject, QgsSettings
+from qgis.core import QgsMessageLog, Qgis, QgsProject, QgsSettings, QgsVectorLayer, QgsFeatureRequest
 import os
 import subprocess
 import html
@@ -401,18 +401,41 @@ class GeminiDockWidget(QtWidgets.QDockWidget):
         pyqt_major = PYQT_VERSION_STR.split('.')[0]
         pyqt_label = f"PyQt{pyqt_major}"
         
-        layers = [l.name() for l in QgsProject.instance().mapLayers().values()]
-        layers_str = ", ".join(layers) if layers else "No layers loaded"
+        layers_info = []
+        for layer in QgsProject.instance().mapLayers().values():
+            if not isinstance(layer, QgsVectorLayer):
+                layers_info.append(f"- {layer.name()} (Type: {layer.type().name})")
+                continue
+            
+            fields = [f.name() for f in layer.fields()]
+            sample_data = []
+            for feature in layer.getFeatures(QgsFeatureRequest().setLimit(3)):
+                # Get field values
+                attrs = feature.attributes()
+                row = {fields[i]: attrs[i] for i in range(min(len(fields), len(attrs)))}
+                sample_data.append(str(row))
+            
+            layer_desc = (
+                f"- {layer.name()} (Vector, {layer.geometryType().name}):\n"
+                f"  Fields: {', '.join(fields)}\n"
+                f"  Sample data: {'; '.join(sample_data)}"
+            )
+            layers_info.append(layer_desc)
+        
+        layers_str = "\n".join(layers_info) if layers_info else "No layers loaded"
         
         system_prompt = (
-            f"You are an attentive and expert QGIS Automation Assistant. Your goal is to help users manipulate QGIS using PyQGIS.\n"
-            f"Environment: QGIS {qgis_version}, {pyqt_label}. Loaded Layers: [{layers_str}].\n\n"
+            f"You are an expert QGIS Automation Assistant. Your goal is to help users manipulate QGIS using PyQGIS.\n"
+            f"Environment: QGIS {qgis_version}, {pyqt_label}.\n\n"
+            f"Active Layers Context:\n{layers_str}\n\n"
             "Guidelines:\n"
-            "1. Always wrap your PyQGIS code in a single ```python block.\n"
-            "2. The FIRST LINE of the code block MUST be: # QGIS_RUN\n"
-            "3. Provide a brief and helpful explanation of the generated code.\n"
-            "4. Be polite, professional, and proactive in your responses.\n"
-            "5. Focus strictly on the QGIS API. Do not apologize for limitations; instead, provide the best possible code solution."
+            "1. ALWAYS prefer generating executable PyQGIS code. NEVER ask the user to copy and paste code unless it is absolutely necessary for external tools.\n"
+            "2. ALWAYS wrap your PyQGIS code in a single ```python block.\n"
+            "3. The FIRST LINE of the PyQGIS code block MUST be: # QGIS_RUN. This ensures the assistant executes it directly in QGIS.\n"
+            "4. Use the provided Layer Context (fields and sample data) to write precise and correct PyQGIS code.\n"
+            "5. Provide a brief and helpful explanation of what the code does.\n"
+            "6. Be polite, professional, and proactive. If you see a potential improvement based on the layers, suggest it.\n"
+            "7. Focus strictly on the QGIS API. Do not apologize for limitations; provide the best possible PyQGIS solution."
         )
         
         full_prompt = system_prompt + "\n\n"
